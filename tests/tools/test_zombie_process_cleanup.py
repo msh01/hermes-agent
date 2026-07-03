@@ -6,7 +6,6 @@ gateway deployments.
 """
 
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -22,6 +21,18 @@ def _spawn_sleep(seconds: float = 60) -> subprocess.Popen:
 
 def _pid_alive(pid: int) -> bool:
     """Return True if a process with the given PID is still running."""
+    if sys.platform == "win32":
+        try:
+            import psutil
+            return psutil.pid_exists(pid)
+        except Exception:
+            return subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=5,
+            ).stdout.count(str(pid)) > 0
     try:
         os.kill(pid, 0)
         return True
@@ -58,8 +69,15 @@ class TestZombieReproduction:
         finally:
             for pid in pids:
                 try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(pid)]
+                        if sys.platform == "win32"
+                        else ["kill", "-9", str(pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                    )
+                except Exception:
                     pass
 
     def test_explicit_terminate_reaps_processes(self):

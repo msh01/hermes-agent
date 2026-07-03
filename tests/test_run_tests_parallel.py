@@ -21,6 +21,7 @@ POSIX-only: Windows has its own grandchild lifecycle (no shared session,
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import subprocess
 import sys
@@ -36,6 +37,16 @@ import pytest
 # so concurrent invocations of the suite don't clobber each other.
 _HANDOFF_DIR = Path(os.environ.get("TMPDIR", "/tmp")) / "hermes-isolation-probe"
 _HANDOFF_DIR.mkdir(exist_ok=True)
+
+
+def _load_runner_module():
+    repo_root = Path(__file__).resolve().parent.parent
+    runner = repo_root / "scripts" / "run_tests_parallel.py"
+    spec = importlib.util.spec_from_file_location("run_tests_parallel_under_test", runner)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def _handoff_path_for(nonce: str) -> Path:
@@ -259,6 +270,24 @@ def test_explicit_double_dash_still_works(tmp_path: Path) -> None:
     proc = _run_runner(probe_dir, "-q", "--", "--tb=short")
     assert proc.returncode == 0, proc.stdout
     assert "unrecognized arguments" not in proc.stdout
+
+
+def test_popen_isolation_kwargs_are_explicit_on_windows(monkeypatch) -> None:
+    runner = _load_runner_module()
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    monkeypatch.setattr(runner.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False)
+    monkeypatch.setattr(runner.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+
+    kwargs = runner._popen_isolation_kwargs()
+
+    assert kwargs == {"creationflags": 0x08000200}
+
+
+def test_popen_isolation_kwargs_use_session_on_posix(monkeypatch) -> None:
+    runner = _load_runner_module()
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+
+    assert runner._popen_isolation_kwargs() == {"start_new_session": True}
 
 
 def test_positional_path_not_treated_as_flag(tmp_path: Path) -> None:

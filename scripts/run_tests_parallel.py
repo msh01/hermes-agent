@@ -219,6 +219,16 @@ def _kill_tree(proc: "subprocess.Popen", pgid: int | None = None) -> None:
         pass
 
 
+def _popen_isolation_kwargs() -> dict:
+    """Return platform-specific process isolation kwargs for pytest children."""
+    if sys.platform == "win32":
+        flags = 0
+        flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        flags |= getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        return {"creationflags": flags}
+    return {"start_new_session": True}
+
+
 def _run_one_file(
     file: Path,
     pytest_args: List[str],
@@ -264,9 +274,9 @@ def _run_one_file(
         env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'},
         # POSIX: place the child at the head of its own process group so
         # _kill_tree can SIGKILL the group atomically.
-        # Windows: this maps to CREATE_NEW_PROCESS_GROUP in CPython 3.12+;
-        # _kill_tree handles the Windows path via taskkill /F /T.
-        start_new_session=True,
+        # Windows: start_new_session was a no-op before CPython 3.12, so pass
+        # explicit creation flags to keep concurrent pytest files isolated.
+        **_popen_isolation_kwargs(),
     )
 
     # Capture the pgid NOW, before the leader can exit and be reaped. Once

@@ -31,6 +31,27 @@ class TestCronjobRunExecutesImmediately:
         assert out["job"]["execution_success"] is True
         m_claim.assert_called_once_with("job-run-1")   # at-most-once claim taken
         m_run.assert_called_once()                       # fired via the shared body
+        assert m_run.call_args.kwargs["extra_context"] is None
+
+    def test_run_action_passes_prompt_as_one_shot_context(self):
+        """action='run' prompt is per-run context, not a stored job update."""
+        stored_job = dict(_JOB)
+        with patch("tools.cronjob_tools.resolve_job_ref", return_value=stored_job), \
+             patch("tools.cronjob_tools.claim_job_for_fire", return_value=True), \
+             patch("cron.scheduler.run_one_job", return_value=True) as m_run, \
+             patch("tools.cronjob_tools.get_job", return_value={"last_status": "ok"}):
+            out = json.loads(
+                cronjob(
+                    action="run",
+                    job_id="job-run-1",
+                    prompt="CONTEXT: client=Foo, count=3",
+                )
+            )
+
+        assert out["success"] is True
+        assert stored_job["prompt"] == "hi"
+        m_run.assert_called_once()
+        assert m_run.call_args.kwargs["extra_context"] == "CONTEXT: client=Foo, count=3"
 
     def test_run_skips_when_claim_lost(self):
         """If the scheduler already holds the fire claim, do NOT double-run."""

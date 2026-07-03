@@ -601,7 +601,7 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _execute_job_now(job: Dict[str, Any]) -> Dict[str, Any]:
+def _execute_job_now(job: Dict[str, Any], *, extra_context: Optional[str] = None) -> Dict[str, Any]:
     """Execute a cron job immediately, outside the scheduler tick.
 
     Atomically claims the job first via ``claim_job_for_fire`` — the same
@@ -628,7 +628,7 @@ def _execute_job_now(job: Dict[str, Any]) -> Dict[str, Any]:
 
         # run_one_job records last_run_at/last_status via mark_job_run (which
         # also clears the fire claim) and returns True iff it processed the job.
-        processed = run_one_job(job)
+        processed = run_one_job(job, extra_context=extra_context)
         refreshed = get_job(job_id) or {}
         ok = refreshed.get("last_status") == "ok"
         return {
@@ -826,12 +826,18 @@ def cronjob(
             return json.dumps({"success": True, "job": _format_job(updated)}, indent=2)
 
         if normalized in {"run", "run_now", "trigger"}:
+            extra_context = None
+            if prompt is not None:
+                scan_error = _scan_cron_prompt(prompt)
+                if scan_error:
+                    return tool_error(scan_error, success=False)
+                extra_context = prompt
             # Execute the job immediately rather than only scheduling it for the
             # next scheduler tick — a manual `run` should actually run, even when
             # no gateway/ticker is active (the #41037 case). The claim inside
             # _execute_job_now advances next_run_at and blocks a concurrent tick
             # from double-firing.
-            exec_result = _execute_job_now(job)
+            exec_result = _execute_job_now(job, extra_context=extra_context)
             # Re-read so the response reflects the post-run last_run_at/last_status.
             result = _format_job(get_job(job_id) or {"id": job_id})
             result["executed"] = exec_result.get("claimed", False)

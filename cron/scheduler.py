@@ -1931,7 +1931,11 @@ def _parse_wake_gate(script_output: str) -> bool:
     return gate.get("wakeAgent", True) is not False
 
 
-def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
+def _build_job_prompt(
+    job: dict,
+    prerun_script: Optional[tuple] = None,
+    extra_context: Optional[str] = None,
+) -> str:
     """Build the effective prompt for a cron job, optionally loading one or more skills first.
 
     Args:
@@ -1941,6 +1945,9 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
             When provided, the script is not re-executed and the cached
             result is used for prompt injection. When omitted, the script
             (if any) runs inline as before.
+        extra_context: Optional manual-run context supplied for this fire only.
+            It is appended to the effective prompt without mutating the stored
+            job.
     """
     user_prompt = str(job.get("prompt") or "")
     prompt = user_prompt
@@ -2028,6 +2035,17 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
             except (OSError, PermissionError) as e:
                 logger.warning("context_from: failed to read output for job %r: %s", source_job_id, e)
                 # silent skip — do not pollute the prompt with error messages
+
+    if extra_context:
+        prompt = (
+            f"{prompt}\n\n"
+            "## Manual Run Context\n"
+            "The following context was supplied when this cron job was triggered "
+            "manually. Use it for this run only; it is not part of the stored "
+            "recurring job prompt.\n\n"
+            f"{extra_context.strip()}"
+        )
+        user_prompt = f"{user_prompt}\n\n{extra_context.strip()}"
 
     # Always prepend cron execution guidance so the agent knows how
     # delivery works and can suppress delivery when appropriate.
@@ -2250,7 +2268,7 @@ def _guard_job_credential_exfil(job: dict) -> None:
         raise RuntimeError(f"Cron job '{job_id}' blocked for safety: {err}")
 
 
-def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
+def run_job(job: dict, *, extra_context: Optional[str] = None) -> tuple[bool, str, str, Optional[str]]:
     """
     Execute a single cron job.
     
@@ -2403,7 +2421,11 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             return True, silent_doc, SILENT_MARKER, None
 
     try:
-        prompt = _build_job_prompt(job, prerun_script=prerun_script)
+        prompt = _build_job_prompt(
+            job,
+            prerun_script=prerun_script,
+            extra_context=extra_context,
+        )
     except CronPromptInjectionBlocked as block_exc:
         # Assembled prompt (user prompt + loaded skill content) tripped the
         # injection scanner. Refuse to run the agent this tick and surface
@@ -3084,7 +3106,14 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             logger.debug("Job '%s': failed to reap stale auxiliary clients: %s", job_id, e)
 
 
-def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -> bool:
+def run_one_job(
+    job: dict,
+    *,
+    adapters=None,
+    loop=None,
+    verbose: bool = False,
+    extra_context: Optional[str] = None,
+) -> bool:
     """Run ONE due job end-to-end: execute → save output → deliver → mark.
 
     This is the shared firing body extracted from ``tick``'s per-job closure so
@@ -3114,7 +3143,7 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
             )
             return True  # not an error — already handled/removed
 
-        success, output, final_response, error = run_job(job)
+        success, output, final_response, error = run_job(job, extra_context=extra_context)
 
         output_file = save_job_output(job["id"], output)
         if verbose:

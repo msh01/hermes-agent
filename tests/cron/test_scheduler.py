@@ -2645,6 +2645,17 @@ class TestBuildJobPromptSilentHint:
         prompt_pos = result.index("My custom prompt")
         assert system_pos < prompt_pos
 
+    def test_manual_run_context_is_appended_for_this_fire_only(self):
+        job = {"prompt": "Stored recurring instruction"}
+
+        result = _build_job_prompt(job, extra_context="CONTEXT: client=Foo, count=3")
+
+        assert "Stored recurring instruction" in result
+        assert "## Manual Run Context" in result
+        assert "CONTEXT: client=Foo, count=3" in result
+        assert "this run only" in result
+        assert job["prompt"] == "Stored recurring instruction"
+
 
 class TestParseWakeGate:
     """Unit tests for _parse_wake_gate — pure function, no side effects."""

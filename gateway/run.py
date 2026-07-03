@@ -351,6 +351,35 @@ def _redact_approval_command(cmd: "str | None") -> str:
     return redact_sensitive_text(str(cmd or ""), force=True)
 
 
+def _format_plain_text_exec_approval(
+    *,
+    command: str,
+    description: str,
+    command_prefix: str,
+    tool_progress_mode: str,
+) -> str:
+    """Format fallback approval text for adapters without approval buttons."""
+    _p = command_prefix or "/"
+    mode = str(tool_progress_mode or "").strip().lower()
+    instructions = (
+        f"Reply `{_p}approve` to execute, `{_p}approve session` to approve this pattern "
+        f"for the session, `{_p}approve always` to approve permanently, or `{_p}deny` to cancel."
+    )
+    if mode in {"off", "log"}:
+        return (
+            "⚠️ **Dangerous command requires approval.**\n"
+            f"Reason: {description}\n\n"
+            f"{instructions}"
+        )
+    cmd_preview = command[:200] + "..." if len(command) > 200 else command
+    return (
+        f"⚠️ **Dangerous command requires approval:**\n"
+        f"```\n{cmd_preview}\n```\n"
+        f"Reason: {description}\n\n"
+        f"{instructions}"
+    )
+
+
 def _gateway_provider_error_reply(text: str) -> str:
     """Map raw provider/API errors to a short user-safe Telegram reply."""
     if _GATEWAY_AUTH_ERROR_RE.search(text):
@@ -17846,13 +17875,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 # can actually type (`!approve`) — typed "/" is blocked in
                 # Slack threads and reserved by Matrix clients.
                 _p = getattr(_status_adapter, "typed_command_prefix", "/")
-                cmd_preview = cmd[:200] + "..." if len(cmd) > 200 else cmd
-                msg = (
-                    f"⚠️ **Dangerous command requires approval:**\n"
-                    f"```\n{cmd_preview}\n```\n"
-                    f"Reason: {desc}\n\n"
-                    f"Reply `{_p}approve` to execute, `{_p}approve session` to approve this pattern "
-                    f"for the session, `{_p}approve always` to approve permanently, or `{_p}deny` to cancel."
+                msg = _format_plain_text_exec_approval(
+                    command=cmd,
+                    description=desc,
+                    command_prefix=_p,
+                    tool_progress_mode=progress_mode,
                 )
                 try:
                     _approval_send_fut = safe_schedule_threadsafe(

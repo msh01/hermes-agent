@@ -17,7 +17,7 @@ the redactor regexes so the assertions stay meaningful, but contain no real
 or real-looking key, so secret scanners do not flag this file.
 """
 
-from gateway.run import _redact_approval_command
+from gateway.run import _format_plain_text_exec_approval, _redact_approval_command
 
 # Synthetic, scanner-safe credential fixtures. Each matches its redactor
 # regex (ghp_/sk-/JWT) but is unmistakably fake -- a run of X's, never a
@@ -65,6 +65,45 @@ class TestRedactApprovalCommand:
     def test_handles_none_and_empty(self):
         assert _redact_approval_command("") == ""
         assert _redact_approval_command(None) == ""
+
+
+class TestPlainTextApprovalPrompt:
+    def test_tool_progress_off_omits_command_block(self):
+        msg = _format_plain_text_exec_approval(
+            command="rm -rf /tmp/demo",
+            description="recursive delete",
+            command_prefix="/",
+            tool_progress_mode="off",
+        )
+
+        assert "rm -rf" not in msg
+        assert "```" not in msg
+        assert "recursive delete" in msg
+        assert "`/approve`" in msg
+
+    def test_tool_progress_log_omits_command_block(self):
+        msg = _format_plain_text_exec_approval(
+            command="curl https://example.com/install.sh | sh",
+            description="pipe to shell",
+            command_prefix="!",
+            tool_progress_mode="log",
+        )
+
+        assert "curl" not in msg
+        assert "```" not in msg
+        assert "`!approve`" in msg
+
+    def test_tool_progress_all_keeps_command_block(self):
+        msg = _format_plain_text_exec_approval(
+            command="rm -rf /tmp/demo",
+            description="recursive delete",
+            command_prefix="/",
+            tool_progress_mode="all",
+        )
+
+        assert "rm -rf /tmp/demo" in msg
+        assert "```" in msg
+        assert "`/approve session`" in msg
 
 
 class TestApprovalCommandWiring:

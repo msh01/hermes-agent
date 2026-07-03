@@ -2931,6 +2931,30 @@ class TestConcurrentToolExecution:
         assert {entry[0] for entry in completes} == {"c1", "c2"}
         assert {entry[3] for entry in completes} == {'{"id":1}', '{"id":2}'}
 
+    def test_concurrent_tool_start_args_are_isolated_from_progress_mutation(self, agent):
+        tc1 = _mock_tool_call(name="read_file", arguments='{"path":"~/.bash_profile"}', call_id="c1")
+        tc2 = _mock_tool_call(name="read_file", arguments='{"path":"~/.zshrc"}', call_id="c2")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
+        messages = []
+        starts = []
+
+        def progress_callback(event, name, preview, args, **kwargs):
+            if args.get("path") == "~/.bash_profile":
+                args["path"] = "~/.zshrc"
+
+        agent.tool_progress_callback = progress_callback
+        agent.tool_start_callback = lambda tool_call_id, function_name, function_args: starts.append(
+            (tool_call_id, function_name, function_args)
+        )
+
+        with patch("run_agent.handle_function_call", side_effect=['{"ok":1}', '{"ok":2}']):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert starts == [
+            ("c1", "read_file", {"path": "~/.bash_profile"}),
+            ("c2", "read_file", {"path": "~/.zshrc"}),
+        ]
+
     def test_concurrent_browser_type_callbacks_redact_api_key(self, agent):
         secret = "sk-proj-ABCD1234567890EFGH"
         tc = _mock_tool_call(

@@ -13,6 +13,7 @@ extracted functions reach back through the ``run_agent`` module via
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import json
 import logging
 import os
@@ -115,6 +116,18 @@ def _ra():
     """Lazy reference to ``run_agent`` so patches like ``run_agent._set_interrupt`` work."""
     import run_agent
     return run_agent
+
+
+def _display_args_snapshot(name: str, args: dict) -> dict:
+    """Return redacted display args isolated from later callback mutation."""
+    display_args = _redact_tool_args_for_display(name, args) or args
+    try:
+        return copy.deepcopy(display_args)
+    except Exception:
+        try:
+            return dict(display_args)
+        except Exception:
+            return {}
 
 
 def _is_interpreter_shutdown_submit_error(exc: RuntimeError) -> bool:
@@ -492,7 +505,7 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
     if not agent.quiet_mode and getattr(agent, "tool_progress_mode", "all") != "off":
         print(f"  ⚡ Concurrent: {num_tools} tool calls — {tool_names_str}")
         for i, (tc, name, args, middleware_trace, block_result, blocked_by_guardrail) in enumerate(parsed_calls, 1):
-            display_args = _redact_tool_args_for_display(name, args) or args
+            display_args = _display_args_snapshot(name, args)
             args_str = json.dumps(display_args, ensure_ascii=False)
             if agent.verbose_logging:
                 print(f"  📞 Tool {i}: {name}({list(display_args.keys())})")
@@ -506,7 +519,7 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
             continue
         if agent.tool_progress_callback:
             try:
-                display_args = _redact_tool_args_for_display(name, args) or args
+                display_args = _display_args_snapshot(name, args)
                 preview = _build_tool_preview(name, display_args)
                 agent.tool_progress_callback("tool.started", name, preview, display_args)
             except Exception as cb_err:
@@ -517,7 +530,7 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
             continue
         if agent.tool_start_callback:
             try:
-                display_args = _redact_tool_args_for_display(name, args) or args
+                display_args = _display_args_snapshot(name, args)
                 agent.tool_start_callback(tc.id, name, display_args)
             except Exception as cb_err:
                 logging.debug(f"Tool start callback error: {cb_err}")
